@@ -46,6 +46,26 @@ class MainActivity : FlutterActivity() {
     private val channelTag = "mChannel"
     private val logTag = "mMainActivity"
     private var pendingIntentAction: String? = null
+
+    private fun handleIntent(intent: Intent?) {
+        val action = intent?.action ?: return
+
+        if (action == "com.carriez.flutter_hbb.action.OPEN_SCREEN_SHARING") {
+            pendingIntentAction = action
+            deliverPendingIntent()
+        }
+    }
+
+    private fun deliverPendingIntent() {
+        val action = pendingIntentAction ?: return
+
+        flutterMethodChannel?.invokeMethod(
+            "onIntent",
+            mapOf("action" to action)
+        )
+    }
+
+
     private var mainService: MainService? = null
 
     private var isAudioStart = false
@@ -63,6 +83,7 @@ class MainActivity : FlutterActivity() {
             channelTag
         )
         initFlutterChannel(flutterMethodChannel!!)
+        deliverPendingIntent()
         // === ДОБАВЛЕНО: обработка Intent, полученного до готовности FlutterEngine ===
         pendingIntentAction?.let { action ->
             sendIntentToFlutter(flutterEngine, action)
@@ -105,6 +126,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {        // === ДОБАВЛЕНО ===
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 
@@ -287,13 +309,6 @@ class MainActivity : FlutterActivity() {
                 "on_voice_call_closed" -> {
                     onVoiceCallClosed()
                 }
-                // === ДОБАВЛЕНО ===
-                "onIntent" -> {
-                    val action = call.argument<String>("action")
-                    // Здесь можно обработать, если нужно что-то вернуть
-                    result.success(null)
-                }
-                // =================
                 else -> {
                     result.error("-1", "No such method", null)
                 }
