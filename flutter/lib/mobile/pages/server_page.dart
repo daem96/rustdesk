@@ -955,17 +955,45 @@ void androidChannelInit() {
             }
             break;
           }
+        case "onIntent":
+          {
+            final action = arguments['action'] as String?;
+            if (action ==
+                'com.carriez.flutter_hbb.action.OPEN_SCREEN_SHARING') {
+              _openScreenSharing();
+            }
+            break;
+          }  
       }
     } catch (e) {
       debugPrintStack(label: "MethodCallHandler err:$e");
     }
     return "";
   });
+
+  _consumeOpenScreenSharingIntent();
+}
+
+Future<void> _consumeOpenScreenSharingIntent() async {
+  for (var i = 0; i < 10; i++) {
+    try {
+      final shouldOpen =
+          await gFFI.invokeMethod("consumeOpenScreenSharingIntent");
+
+      if (shouldOpen == true) {
+        _openScreenSharing();
+        return;
+      }
+    } catch (e) {
+      debugPrint("consumeOpenScreenSharingIntent failed: $e");
+    }
+
+    await Future.delayed(const Duration(milliseconds: 300));
+  }
 }
 
 void _openScreenSharing() {
-  // Используем Get для навигации, так как приложение уже на GetMaterialApp
-  Get.to(() => ServerPage());
+  HomePage.openScreenSharingTab();
 }
 
 void showScamWarning(BuildContext context, ServerModel serverModel) {

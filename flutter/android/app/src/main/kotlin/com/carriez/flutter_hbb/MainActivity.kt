@@ -1,51 +1,68 @@
 package com.carriez.flutter_hbb
 
 /**
- * Handle events from flutter
- * Request MediaProjection permission
+ * Handle events from flutter Request MediaProjection permission
  *
  * Inspired by [droidVNC-NG] https://github.com/bk138/droidVNC-NG
  */
-
-import ffi.FFI
-
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.content.ClipboardManager
-import android.os.Bundle
-import android.os.Build
-import android.os.IBinder
-import android.util.Log
-import android.view.WindowManager
 import android.media.MediaCodecInfo
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
 import android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar
 import android.media.MediaCodecList
-import android.media.MediaFormat
-import android.util.DisplayMetrics
-import androidx.annotation.RequiresApi
-import org.json.JSONArray
-import org.json.JSONObject
+import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
+import android.util.Log
+import android.view.WindowManager
 import com.hjq.permissions.XXPermissions
+import ffi.FFI
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlin.concurrent.thread
-
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     companion object {
         var flutterMethodChannel: MethodChannel? = null
         private var _rdClipboardManager: RdClipboardManager? = null
         val rdClipboardManager: RdClipboardManager?
-            get() = _rdClipboardManager;
+            get() = _rdClipboardManager
     }
 
     private val channelTag = "mChannel"
     private val logTag = "mMainActivity"
     private var pendingIntentAction: String? = null
+
+    private val openScreenSharingAction = "com.carriez.flutter_hbb.action.OPEN_SCREEN_SHARING"
+    private var pendingOpenScreenSharing = false
+
+    private fun handleIntent(intent: Intent?) {
+        val action = intent?.action ?: return
+        val data = intent?.dataString
+
+        if (action == openScreenSharingAction || data == "rustdesk://screen-sharing") {
+            pendingOpenScreenSharing = true
+
+            flutterMethodChannel?.invokeMethod(
+                    "onIntent",
+                    mapOf("action" to openScreenSharingAction)
+            )
+        }
+    }
+
+    private fun deliverPendingIntent() {
+        val action = pendingIntentAction ?: return
+
+        flutterMethodChannel?.invokeMethod("onIntent", mapOf("action" to action))
+    }
+
     private var mainService: MainService? = null
 
     private var isAudioStart = false
@@ -58,11 +75,16 @@ class MainActivity : FlutterActivity() {
                 bindService(it, serviceConnection, Context.BIND_AUTO_CREATE)
             }
         }
-        flutterMethodChannel = MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            channelTag
-        )
+        flutterMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelTag)
         initFlutterChannel(flutterMethodChannel!!)
+        if (pendingOpenScreenSharing) {
+            flutterMethodChannel?.invokeMethod(
+                    "onIntent",
+                    mapOf("action" to openScreenSharingAction)
+            )
+        }
+
+        deliverPendingIntent()
         // === ДОБАВЛЕНО: обработка Intent, полученного до готовности FlutterEngine ===
         pendingIntentAction?.let { action ->
             sendIntentToFlutter(flutterEngine, action)
@@ -83,60 +105,67 @@ class MainActivity : FlutterActivity() {
         val inputPer = InputService.isOpen
         activity.runOnUiThread {
             flutterMethodChannel?.invokeMethod(
-                "on_state_changed",
-                mapOf("name" to "input", "value" to inputPer.toString())
+                    "on_state_changed",
+                    mapOf("name" to "input", "value" to inputPer.toString())
             )
         }
     }
 
     private fun requestMediaProjection() {
-        val intent = Intent(this, PermissionRequestTransparentActivity::class.java).apply {
-            action = ACT_REQUEST_MEDIA_PROJECTION
-        }
+        val intent =
+                Intent(this, PermissionRequestTransparentActivity::class.java).apply {
+                    action = ACT_REQUEST_MEDIA_PROJECTION
+                }
         startActivityForResult(intent, REQ_INVOKE_PERMISSION_ACTIVITY_MEDIA_PROJECTION)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_INVOKE_PERMISSION_ACTIVITY_MEDIA_PROJECTION && resultCode == RES_FAILED) {
+        if (requestCode == REQ_INVOKE_PERMISSION_ACTIVITY_MEDIA_PROJECTION &&
+                        resultCode == RES_FAILED
+        ) {
             flutterMethodChannel?.invokeMethod("on_media_projection_canceled", null)
         }
     }
 
-    override fun onNewIntent(intent: Intent) {        // === ДОБАВЛЕНО ===
+    override fun onNewIntent(intent: Intent) { // === ДОБАВЛЕНО ===
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (_rdClipboardManager == null) {
-            _rdClipboardManager = RdClipboardManager(getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            _rdClipboardManager =
+                    RdClipboardManager(
+                            getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    )
             FFI.setClipboardManager(_rdClipboardManager!!)
         }
-        handleIntent(intent)                          // === ДОБАВЛЕНО ===
+
+        handleIntent(intent) // === ДОБАВЛЕНО ===
     }
 
     override fun onDestroy() {
         Log.e(logTag, "onDestroy")
-        mainService?.let {
-            unbindService(serviceConnection)
-        }
+        mainService?.let { unbindService(serviceConnection) }
         super.onDestroy()
     }
 
-    private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.d(logTag, "onServiceConnected")
-            val binder = service as MainService.LocalBinder
-            mainService = binder.getService()
-        }
+    private val serviceConnection =
+            object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+                    Log.d(logTag, "onServiceConnected")
+                    val binder = service as MainService.LocalBinder
+                    mainService = binder.getService()
+                }
 
-        override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(logTag, "onServiceDisconnected")
-            mainService = null
-        }
-    }
+                override fun onServiceDisconnected(name: ComponentName?) {
+                    Log.d(logTag, "onServiceDisconnected")
+                    mainService = null
+                }
+            }
 
     private fun initFlutterChannel(flutterMethodChannel: MethodChannel) {
         flutterMethodChannel.setMethodCallHandler { call, result ->
@@ -154,20 +183,16 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "start_capture" -> {
-                    mainService?.let {
-                        result.success(it.startCapture())
-                    } ?: let {
-                        result.success(false)
-                    }
+                    mainService?.let { result.success(it.startCapture()) }
+                            ?: let { result.success(false) }
                 }
                 "stop_service" -> {
                     Log.d(logTag, "Stop service")
                     mainService?.let {
                         it.destroy()
                         result.success(true)
-                    } ?: let {
-                        result.success(false)
                     }
+                            ?: let { result.success(false) }
                 }
                 "check_permission" -> {
                     if (call.arguments is String) {
@@ -193,20 +218,17 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "check_video_permission" -> {
-                    mainService?.let {
-                        result.success(it.checkMediaPermission())
-                    } ?: let {
-                        result.success(false)
-                    }
+                    mainService?.let { result.success(it.checkMediaPermission()) }
+                            ?: let { result.success(false) }
                 }
                 "check_service" -> {
                     Companion.flutterMethodChannel?.invokeMethod(
-                        "on_state_changed",
-                        mapOf("name" to "input", "value" to InputService.isOpen.toString())
+                            "on_state_changed",
+                            mapOf("name" to "input", "value" to InputService.isOpen.toString())
                     )
                     Companion.flutterMethodChannel?.invokeMethod(
-                        "on_state_changed",
-                        mapOf("name" to "media", "value" to MainService.isReady.toString())
+                            "on_state_changed",
+                            mapOf("name" to "media", "value" to MainService.isReady.toString())
                     )
                     result.success(true)
                 }
@@ -216,8 +238,8 @@ class MainActivity : FlutterActivity() {
                     } else {
                         InputService.ctx = null
                         Companion.flutterMethodChannel?.invokeMethod(
-                            "on_state_changed",
-                            mapOf("name" to "input", "value" to InputService.isOpen.toString())
+                                "on_state_changed",
+                                mapOf("name" to "input", "value" to InputService.isOpen.toString())
                         )
                     }
                     result.success(true)
@@ -238,7 +260,6 @@ class MainActivity : FlutterActivity() {
                         window.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
                     }
                     result.success(true)
-
                 }
                 "try_sync_clipboard" -> {
                     rdClipboardManager?.syncClipboard(true)
@@ -287,13 +308,11 @@ class MainActivity : FlutterActivity() {
                 "on_voice_call_closed" -> {
                     onVoiceCallClosed()
                 }
-                // === ДОБАВЛЕНО ===
-                "onIntent" -> {
-                    val action = call.argument<String>("action")
-                    // Здесь можно обработать, если нужно что-то вернуть
-                    result.success(null)
+                "consumeOpenScreenSharingIntent" -> {
+                    val value = pendingOpenScreenSharing
+                    pendingOpenScreenSharing = false
+                    result.success(value)
                 }
-                // =================
                 else -> {
                     result.error("-1", "No such method", null)
                 }
@@ -302,20 +321,10 @@ class MainActivity : FlutterActivity() {
     }
 
     // === ДОБАВЛЕННЫЕ МЕТОДЫ ===
-    private fun handleIntent(intent: Intent?) {
-        if (intent?.action == "com.carriez.flutter_hbb.action.OPEN_SCREEN_SHARING") {
-            val engine = flutterEngine
-            if (engine != null) {
-                sendIntentToFlutter(engine, intent.action!!)
-            } else {
-                pendingIntentAction = intent.action!!
-            }
-        }
-    }
 
     private fun sendIntentToFlutter(engine: FlutterEngine, action: String) {
         MethodChannel(engine.dartExecutor.binaryMessenger, channelTag)
-            .invokeMethod("onIntent", mapOf("action" to action))
+                .invokeMethod("onIntent", mapOf("action" to action))
     }
     // ===========================
 
@@ -335,15 +344,28 @@ class MainActivity : FlutterActivity() {
             val codecObject = JSONObject()
             codecObject.put("name", codec.name)
             codecObject.put("is_encoder", codec.isEncoder)
-            var hw: Boolean? = null;
+            var hw: Boolean? = null
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 hw = codec.isHardwareAccelerated
             } else {
                 // https://chromium.googlesource.com/external/webrtc/+/HEAD/sdk/android/src/java/org/webrtc/MediaCodecUtils.java#29
                 // https://chromium.googlesource.com/external/webrtc/+/master/sdk/android/api/org/webrtc/HardwareVideoEncoderFactory.java#229
-                if (listOf("OMX.google.", "OMX.SEC.", "c2.android").any { codec.name.startsWith(it, true) }) {
+                if (listOf("OMX.google.", "OMX.SEC.", "c2.android").any {
+                            codec.name.startsWith(it, true)
+                        }
+                ) {
                     hw = false
-                } else if (listOf("c2.qti", "OMX.qcom.video", "OMX.Exynos", "OMX.hisi", "OMX.MTK", "OMX.Intel", "OMX.Nvidia").any { codec.name.startsWith(it, true) }) {
+                } else if (listOf(
+                                        "c2.qti",
+                                        "OMX.qcom.video",
+                                        "OMX.Exynos",
+                                        "OMX.hisi",
+                                        "OMX.MTK",
+                                        "OMX.Intel",
+                                        "OMX.Nvidia"
+                                )
+                                .any { codec.name.startsWith(it, true) }
+                ) {
                     hw = true
                 }
             }
@@ -353,8 +375,9 @@ class MainActivity : FlutterActivity() {
             codecObject.put("hw", hw)
             var mime_type = ""
             codec.supportedTypes.forEach { type ->
-                if (listOf("video/avc", "video/hevc").contains(type)) { // "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9", "video/av01"
-                    mime_type = type;
+                if (listOf("video/avc", "video/hevc").contains(type)
+                ) { // "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9", "video/av01"
+                    mime_type = type
                 }
             }
             if (mime_type.isNotEmpty()) {
@@ -362,7 +385,9 @@ class MainActivity : FlutterActivity() {
                 val caps = codec.getCapabilitiesForType(mime_type)
                 if (codec.isEncoder) {
                     // Encoder's max_height and max_width are interchangeable
-                    if (!caps.videoCapabilities.isSizeSupported(w,h) && !caps.videoCapabilities.isSizeSupported(h,w)) {
+                    if (!caps.videoCapabilities.isSizeSupported(w, h) &&
+                                    !caps.videoCapabilities.isSizeSupported(h, w)
+                    ) {
                         return@forEach
                     }
                 }
@@ -370,7 +395,7 @@ class MainActivity : FlutterActivity() {
                 codecObject.put("max_width", caps.videoCapabilities.supportedWidths.upper)
                 codecObject.put("min_height", caps.videoCapabilities.supportedHeights.lower)
                 codecObject.put("max_height", caps.videoCapabilities.supportedHeights.upper)
-                val surface = caps.colorFormats.contains(COLOR_FormatSurface);
+                val surface = caps.colorFormats.contains(COLOR_FormatSurface)
                 codecObject.put("surface", surface)
                 val nv12 = caps.colorFormats.contains(COLOR_FormatYUV420SemiPlanar)
                 codecObject.put("nv12", nv12)
@@ -381,7 +406,12 @@ class MainActivity : FlutterActivity() {
                 codecObject.put("max_bitrate", caps.videoCapabilities.bitrateRange.upper / 1000)
                 if (!codec.isEncoder) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        codecObject.put("low_latency", caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency))
+                        codecObject.put(
+                                "low_latency",
+                                caps.isFeatureSupported(
+                                        MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency
+                                )
+                        )
                     }
                 }
                 if (!codec.isEncoder) {
@@ -400,19 +430,22 @@ class MainActivity : FlutterActivity() {
 
     private fun onVoiceCallStarted() {
         var ok = false
-        mainService?.let {
-            ok = it.onVoiceCallStarted()
-        } ?: let {
-            isAudioStart = true
-            ok = audioRecordHandle.onVoiceCallStarted(null)
-        }
+        mainService?.let { ok = it.onVoiceCallStarted() }
+                ?: let {
+                    isAudioStart = true
+                    ok = audioRecordHandle.onVoiceCallStarted(null)
+                }
         if (!ok) {
             // Rarely happens, So we just add log and msgbox here.
             Log.e(logTag, "onVoiceCallStarted fail")
-            flutterMethodChannel?.invokeMethod("msgbox", mapOf(
-                "type" to "custom-nook-nocancel-hasclose-error",
-                "title" to "Voice call",
-                "text" to "Failed to start voice call."))
+            flutterMethodChannel?.invokeMethod(
+                    "msgbox",
+                    mapOf(
+                            "type" to "custom-nook-nocancel-hasclose-error",
+                            "title" to "Voice call",
+                            "text" to "Failed to start voice call."
+                    )
+            )
         } else {
             Log.d(logTag, "onVoiceCallStarted success")
         }
@@ -420,19 +453,22 @@ class MainActivity : FlutterActivity() {
 
     private fun onVoiceCallClosed() {
         var ok = false
-        mainService?.let {
-            ok = it.onVoiceCallClosed()
-        } ?: let {
-            isAudioStart = false
-            ok = audioRecordHandle.onVoiceCallClosed(null)
-        }
+        mainService?.let { ok = it.onVoiceCallClosed() }
+                ?: let {
+                    isAudioStart = false
+                    ok = audioRecordHandle.onVoiceCallClosed(null)
+                }
         if (!ok) {
             // Rarely happens, So we just add log and msgbox here.
             Log.e(logTag, "onVoiceCallClosed fail")
-            flutterMethodChannel?.invokeMethod("msgbox", mapOf(
-                "type" to "custom-nook-nocancel-hasclose-error",
-                "title" to "Voice call",
-                "text" to "Failed to stop voice call."))
+            flutterMethodChannel?.invokeMethod(
+                    "msgbox",
+                    mapOf(
+                            "type" to "custom-nook-nocancel-hasclose-error",
+                            "title" to "Voice call",
+                            "text" to "Failed to stop voice call."
+                    )
+            )
         } else {
             Log.d(logTag, "onVoiceCallClosed success")
         }

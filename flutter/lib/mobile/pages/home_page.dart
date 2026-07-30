@@ -18,6 +18,17 @@ abstract class PageShape extends Widget {
 class HomePage extends StatefulWidget {
   static final homeKey = GlobalKey<HomePageState>();
 
+  static bool _pendingOpenScreenSharing = false;
+
+  static void openScreenSharingTab() {
+    final state = homeKey.currentState;
+    if (state == null) {
+      _pendingOpenScreenSharing = true;
+      return;
+    }
+    state.openScreenSharingTab();
+  }
+
   HomePage() : super(key: homeKey);
 
   @override
@@ -33,6 +44,22 @@ class HomePageState extends State<HomePage> {
       ? _selectedIndex == _chatPageTabIndex
       : false; // change this when ios have chat page
 
+
+  void openScreenSharingTab() {
+    final index = _pages.indexWhere((page) => page is ServerPage);
+    if (index < 0) {
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
   void refreshPages() {
     setState(() {
       initPages();
@@ -43,6 +70,13 @@ class HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     initPages();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (HomePage._pendingOpenScreenSharing) {
+        HomePage._pendingOpenScreenSharing = false;
+        openScreenSharingTab();
+      }
+    });
   }
 
   void initPages() {
